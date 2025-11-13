@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Connect 4</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --board: #1e293b;
+      --grid: #334155;
+      --p1: #ef4444;
+      --p2: #3b82f6;
+      --win: #22c55e;
+      --text: #e2e8f0;
+    }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      display: grid; place-items: center; min-height: 100vh;
+    }
+    .app { width: 100%; max-width: 720px; padding: 16px; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+      align-items: center;
+    }
+    .controls button, .controls select {
+      background: var(--grid); color: var(--text);
+      border: 1px solid #475569; border-radius: 8px; padding: 8px 12px; cursor: pointer;
+    }
+    .status { margin: 8px 0 16px; font-size: 14px; opacity: 0.9; }
+    .board {
+      background: var(--board); border-radius: 12px; padding: 12px;
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    }
+    .col {
+      background: var(--grid); border-radius: 10px; padding: 8px;
+      display: grid; grid-template-rows: repeat(6, 1fr); gap: 8px;
+      cursor: pointer; transition: transform 0.05s ease;
+    }
+    .col:hover { transform: translateY(-1px); }
+    .cell {
+      width: 100%; aspect-ratio: 1; border-radius: 50%;
+      background: #0b1220; border: 2px solid #101827;
+      display: grid; place-items: center; font-weight: 700;
+    }
+    .p1 { background: var(--p1); border-color: #7f1d1d; }
+    .p2 { background: var(--p2); border-color: #1e3a8a; }
+    .win { outline: 3px solid var(--win); }
+    .legend { font-size: 12px; opacity: 0.8; margin-top: 10px; }
+    .footer { margin-top: 16px; font-size: 12px; opacity: 0.7; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Connect 4</h1>
+    <div class="controls">
+      <label>Mode:
+        <select id="mode">
+          <option value="pvp">Two players</option>
+          <option value="ai">Vs AI</option>
+        </select>
+      </label>
+      <label>AI difficulty:
+        <select id="difficulty">
+          <option value="1">Easy</option>
+          <option value="3" selected>Medium</option>
+          <option value="5">Hard</option>
+        </select>
+      </label>
+      <button id="reset">Reset</button>
+      <button id="undo">Undo</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="board" id="board"></div>
+    <div class="legend">Tip: Click a column to drop a piece. Four in a row (any direction) wins.</div>
+    <div class="footer">Made for Jake — stay undefeated.</div>
+  </div>
+
+  <script>
+    // Config
+    const ROWS = 6, COLS = 7;
+    const EMPTY = 0, P1 = 1, P2 = 2;
+
+    // State
+    let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+    let current = P1;
+    let winner = EMPTY;
+    let history = [];
+    let modeEl, diffEl, statusEl, boardEl;
+
+    // Init
+    window.addEventListener('DOMContentLoaded', () => {
+      modeEl = document.getElementById('mode');
+      diffEl = document.getElementById('difficulty');
+      statusEl = document.getElementById('status');
+      boardEl = document.getElementById('board');
+      document.getElementById('reset').addEventListener('click', reset);
+      document.getElementById('undo').addEventListener('click', undo);
+      modeEl.addEventListener('change', () => { reset(); });
+      diffEl.addEventListener('change', () => { if (modeEl.value==='ai' && current===P2) aiMove(); });
+      render();
+      updateStatus();
+    });
+
+    function reset() {
+      grid = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+      current = P1; winner = EMPTY; history = [];
+      render();
+      updateStatus();
+    }
+    function undo() {
+      if (history.length === 0 || winner) return;
+      const last = history.pop();
+      grid[last.r][last.c] = EMPTY;
+      current = last.player; // revert turn
+      winner = EMPTY;
+      render();
+      updateStatus();
+    }
+
+    // Rendering
+    function render() {
+      boardEl.innerHTML = '';
+      for (let c = 0; c < COLS; c++) {
+        const colEl = document.createElement('div');
+        colEl.className = 'col';
+        colEl.addEventListener('click', () => handleColumnClick(c));
+        for (let r = ROWS - 1; r >= 0; r--) {
+          const val = grid[r][c];
+          const cell = document.createElement('div');
+          cell.className = 'cell' + (val===P1 ? ' p1' : val===P2 ? ' p2' : '');
+          // winning highlight if exists
+          const w = winningLine();
+          if (w && w.some(([wr, wc]) => wr===r && wc===c)) cell.classList.add('win');
+          colEl.appendChild(cell);
+        }
+        boardEl.appendChild(colEl);
+      }
+    }
+
+    // Game logic
+    function handleColumnClick(c) {
+      if (winner) return;
+      const mode = modeEl.value;
+      const r = dropRow(c);
+      if (r === -1) return; // full
+      move(r, c, current);
+      if (winner) { render(); updateStatus(); return; }
+      if (mode === 'ai' && current === P2) {
+        setTimeout(aiMove, 150);
+      }
+      render();
+      updateStatus();
+    }
+
+    function move(r, c, player) {
+      grid[r][c] = player;
+      history.push({ r, c, player: current });
+      current = (player === P1) ? P2 : P1;
+      const win = checkWin();
+      if (win) winner = player;
+      else if (isDraw()) winner = -1;
+    }
+
+    function dropRow(c) {
+      for (let r = 0; r < ROWS; r++) {
+        if (grid[r][c] === EMPTY) return r;
+      }
+      return -1;
+    }
+
+    function isDraw() {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[ROWS-1][c] === EMPTY) return false;
+      }
+      return true;
+    }
+
+    function updateStatus() {
+      if (winner === P1) { statusEl.textContent = "Red (P1) wins!"; return; }
+      if (winner === P2) { statusEl.textContent = "Blue (P2) wins!"; return; }
+      if (winner === -1) { statusEl.textContent = "It's a draw."; return; }
+      const turn = current === P1 ? "Red (P1)" : "Blue (P2)";
+      const mode = modeEl.value;
+      statusEl.textContent = mode === 'ai'
+        ? (current === P1 ? "Your turn (Red)." : "AI thinking…")
+        : `Turn: ${turn}`;
+    }
+
+    // Win detection
+    function checkWin() {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const player = grid[r][c];
+          if (player === EMPTY) continue;
+          for (const [dr, dc] of dirs) {
+            const cells = [[r,c]];
+            for (let k = 1; k < 4; k++) {
+              const nr = r + dr*k, nc = c + dc*k;
+              if (nr<0 || nr>=ROWS || nc<0 || nc>=COLS) break;
+              if (grid[nr][nc] !== player) break;
+              cells.push([nr,nc]);
+            }
+            if (cells.length === 4) return cells;
+          }
+        }
+      }
+      return null;
+    }
+
+    function winningLine() { return checkWin(); }
+
+    // Simple AI (minimax with depth limit + heuristics)
+    function aiMove() {
+      if (winner) return;
+      const depth = parseInt(diffEl.value, 10);
+      const { col } = bestMove(grid, depth);
+      const r = dropRow(col);
+      if (r !== -1) move(r, col, P2);
+      render();
+      updateStatus();
+    }
+
+    function bestMove(state, depth) {
+      let bestScore = -Infinity, bestCol = 0;
+      for (const c of orderCols()) {
+        const r = findRow(state, c);
+        if (r === -1) continue;
+        const next = clone(state);
+        next[r][c] = P2;
+        const score = minimax(next, depth - 1, false, -Infinity, Infinity);
+        if (score > bestScore) { bestScore = score; bestCol = c; }
+      }
+      return { col: bestCol, score: bestScore };
+    }
+
+    function minimax(state, depth, maximizing, alpha, beta) {
+      const w = winnerOf(state);
+      if (w === P2) return 100000;
+      if (w === P1) return -100000;
+      if (w === -1) return 0;
+      if (depth === 0) return evaluate(state);
+
+      if (maximizing) {
+        let maxEval = -Infinity;
+        for (const c of orderCols()) {
+          const r = findRow(state, c);
+          if (r === -1) continue;
+          const next = clone(state); next[r][c] = P2;
+          const evalScore = minimax(next, depth - 1, false, alpha, beta);
+          maxEval = Math.max(maxEval, evalScore);
+          alpha = Math.max(alpha, evalScore);
+          if (beta <= alpha) break;
+        }
+        return maxEval;
+      } else {
+        let minEval = Infinity;
+        for (const c of orderCols()) {
+          const r = findRow(state, c);
+          if (r === -1) continue;
+          const next = clone(state); next[r][c] = P1;
+          const evalScore = minimax(next, depth - 1, true, alpha, beta);
+          minEval = Math.min(minEval, evalScore);
+          beta = Math.min(beta, evalScore);
+          if (beta <= alpha) break;
+        }
+        return minEval;
+      }
+    }
+
+    // Heuristic: center preference + potential lines
+    function evaluate(state) {
+      let score = 0;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          score += cellScore(state, r, c, P2);
+          score -= cellScore(state, r, c, P1);
+        }
+      }
+      // favor center columns
+      score += centerWeight(state, P2) * 3;
+      score -= centerWeight(state, P1) * 3;
+      return score;
+    }
+
+    function cellScore(state, r, c, player) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      let s = 0;
+      for (const [dr, dc] of dirs) {
+        let count = 0, open = 0;
+        for (let k = -3; k <= 3; k++) {
+          const nr = r + dr*k, nc = c + dc*k;
+          if (nr<0 || nr>=ROWS || nc<0 || nc>=COLS) continue;
+          const val = state[nr][nc];
+          if (val === player) count++;
+          else if (val === EMPTY) open++;
+        }
+        if (count >= 2 && open >= 2) s += Math.pow(count, 2);
+      }
+      return s;
+    }
+
+    function centerWeight(state, player) {
+      const centerCol = Math.floor(COLS / 2);
+      let s = 0;
+      for (let r = 0; r < ROWS; r++) {
+        if (state[r][centerCol] === player) s++;
+      }
+      return s;
+    }
+
+    // Helpers
+    function orderCols() { return [3,2,4,1,5,0,6]; }
+    function clone(state) { return state.map(row => row.slice()); }
+    function findRow(state, c) {
+      for (let r = 0; r < ROWS; r++) if (state[r][c] === EMPTY) return r;
+      return -1;
+    }
+    function winnerOf(state) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const player = state[r][c];
+          if (player === EMPTY) continue;
+          for (const [dr, dc] of dirs) {
+            let count = 1;
+            for (let k = 1; k < 4; k++) {
+              const nr = r + dr*k, nc = c + dc*k;
+              if (nr<0 || nr>=ROWS || nc<0 || nc>=COLS) break;
+              if (state[nr][nc] !== player) break;
+              count++;
+            }
+            if (count === 4) return player;
+          }
+        }
+      }
+      // draw?
+      let fullTop = true;
+      for (let c = 0; c < COLS; c++) if (state[ROWS-1][c] === EMPTY) fullTop = false;
+      return fullTop ? -1 : 0;
+    }
+  </script>
+</body>
+</html>
